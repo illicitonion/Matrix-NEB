@@ -48,6 +48,8 @@ class GithubPlugin(Plugin):
         if not self.store.has("secret_token"):
             self.store.set("secret_token", "")
 
+        self.sha_regex = re.compile(r'[0-9A-F]{6,40}')
+
         if not self.store.has("github_access_token"):
             log.info("A github access_token is required to create github issues.")
             log.info("Issues will be created as this user.")
@@ -265,6 +267,44 @@ class GithubPlugin(Plugin):
             ))
         except KeyError:
             return "Not tracking any projects currently."
+
+    def on_msg(self, event, body):
+        body = body.upper()
+        groups = self.sha_regex.findall(body)
+        if not groups:
+            return
+
+        projects = self.store.get("known_projects")
+
+        for sha in groups:
+            for project in projects:
+                try:
+                    commit_info = self._get_commit(project, sha)
+                    if commit_info:
+                        self.matrix.send_message(
+                            event["room_id"],
+                            commit_info,
+                            msgtype="m.notice"
+                        )
+                except Exception as e:
+                    log.exception(e)
+
+    def _get_commit(self, project, sha):
+        resp = requests.get("https://api.github.com/repos/%s/commits/%s" % (
+            project, sha,
+            ), headers={"Accept": "application/vnd.github.v3+json"}
+        )
+        if not resp.ok:
+            return None
+
+        j = rep.json()
+
+        return "Commit %s to repo %s by %s: %s" % (
+            j["sha"],
+            project,
+            j["author"]["login"],
+            j["html_url"],
+        )
 
     def on_event(self, event, event_type):
         self.rooms.update(event)
